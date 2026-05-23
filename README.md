@@ -1,4 +1,4 @@
-# StatementSense — SBI Bank Statement Analyzer
+# StatementSense — Bank Statement Analyzer
 
 Upload your SBI PDF bank statements and get a clean Excel spending report in seconds. No data is stored anywhere — everything runs locally on your machine.
 
