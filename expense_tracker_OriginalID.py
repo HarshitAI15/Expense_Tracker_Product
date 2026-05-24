@@ -191,12 +191,92 @@ def clean_rows(rows: list) -> pd.DataFrame:
 # Merchant Extraction
 # ---------------------------------------------------------------------------
  
+# Segments that are never merchant names
+SKIP_KEYWORDS = {
+    "upi", "imps", "neft", "rtgs", "dr", "cr", "p2m", "p2p",
+    "p2b", "rev", "refund", "transfer", "payment", "pay",
+    "sbi", "ybl", "oksbi", "okaxis", "okhdfcbank", "okicici",
+    "paytm", "gpay", "phonepe", "amazonpay", "mobikwik",
+    "utib", "hdfc", "icic", "axis", "punb", "cnrb", "ubin",
+    "idfb", "fdrl", "kvbl", "jsfb", "fino", "airp", "bkid",
+    "null", "nan", "",
+}
+ 
+def _is_likely_merchant(segment: str) -> bool:
+    """
+    Returns True if a slash-delimited segment looks like a merchant name.
+    Filters out: pure numbers, transaction IDs, bank codes, short codes.
+    """
+    s = segment.strip()
+ 
+    if not s:
+        return False
+ 
+    # Pure number or mostly numeric (transaction/ref IDs)
+    if re.fullmatch(r"[\d\s\-]+", s):
+        return False
+ 
+    # Very short segments are usually codes like DR, CR, P2M
+    if len(s) <= 2:
+        return False
+ 
+    # Known non-merchant keywords (case-insensitive)
+    if s.lower() in SKIP_KEYWORDS:
+        return False
+ 
+    # Looks like a bank IFSC code — 4 letters + 7 alphanumeric
+    if re.fullmatch(r"[A-Z]{4}[0-9A-Z]{7}", s):
+        return False
+ 
+    # Looks like a VPA / UPI ID (contains @)
+    if "@" in s:
+        return False
+ 
+    # Mostly digits with a few letters (like ref IDs: 4059XXXXXX)
+    digit_ratio = sum(c.isdigit() for c in s) / len(s)
+    if digit_ratio > 0.6:
+        return False
+ 
+    return True
+ 
+ 
 def extract_merchant(details: str) -> str:
-    parts = details.split("/")
-    if len(parts) >= 4:
-        name = re.sub(r"\s+\d{6,}.*$", "", parts[3]).strip()
-        if name:
-            return name
+    """
+    Dynamically extracts merchant name from a transaction details string.
+ 
+    Strategy:
+    1. Split by '/' and scan all segments
+    2. Skip known non-merchant patterns (numbers, bank codes, UPI keywords)
+    3. Pick the best candidate — prefers segments after the 2nd slash
+       to avoid catching transaction type labels (UPI, IMPS etc.)
+    4. Clean trailing noise (long numbers, extra spaces)
+ 
+    Works across UPI, IMPS, NEFT, and future SBI format changes.
+    """
+    if not details or not isinstance(details, str):
+        return "UNKNOWN"
+ 
+    parts = [p.strip() for p in details.split("/")]
+ 
+    # Prefer segments from index 2 onwards (skip txn type & DR/CR marker)
+    # but fall back to full list if nothing found
+    candidates = parts[2:] if len(parts) > 2 else parts
+ 
+    for segment in candidates:
+        clean = re.sub(r"\s+\d{6,}.*$", "", segment).strip()  # strip trailing ref numbers
+        clean = re.sub(r"[^A-Za-z0-9 &.\-_']", " ", clean).strip()  # remove special chars
+        clean = re.sub(r"\s{2,}", " ", clean)                  # collapse spaces
+        if _is_likely_merchant(clean):
+            return clean.title()  # Title Case for consistency
+ 
+    # Last resort — try full list from the beginning
+    for segment in parts:
+        clean = re.sub(r"\s+\d{6,}.*$", "", segment).strip()
+        clean = re.sub(r"[^A-Za-z0-9 &.\-_']", " ", clean).strip()
+        clean = re.sub(r"\s{2,}", " ", clean)
+        if _is_likely_merchant(clean):
+            return clean.title()
+ 
     return "UNKNOWN"
  
  
